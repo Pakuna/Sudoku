@@ -5,7 +5,7 @@ let oAllRows = {}, oAllColumns = {}, oAllBoxes = {};
 let iCurrentRow = null, iCurrentCol = null, iCurrentBox = null;
 let aAllFields = [];
 
-let bShowSolutions = bDrawSolutions && false;
+let bShowSolutions = bDrawSolutions && true;
 let bDrawSolutionsOnShow = false;
 
 // Hashing stuff
@@ -68,6 +68,9 @@ document.body.onload = (function() {
                 oSolutions.forEach(oSolution => {
                     oSolution.style.display = "none";
                 });
+                aAllFields.forEach(oField => {
+                    oField.removeHighlight();
+                });
             }
         }
     }
@@ -97,15 +100,10 @@ document.body.onload = (function() {
                 const iCol = 3 * (iGridCol - 1) + iBoxCol;
                 const iBox = 3 * (iGridRow - 1) + iGridCol;
 
-                if (typeof oAllRows[iRow] == "undefined") {
-                    oAllRows[iRow] = [];
-                }
-                if (typeof oAllColumns[iCol] == "undefined") {
-                    oAllColumns[iCol] = [];
-                }
-                if (typeof oAllBoxes[iBox] == "undefined") {
-                    oAllBoxes[iBox] = [];
-                }
+                // Init collections
+                oAllRows[iRow] = oAllRows[iRow] || [];
+                oAllColumns[iCol] = oAllColumns[iCol] || [];
+                oAllBoxes[iBox] = oAllBoxes[iBox] || [];
 
                 const oField = document.createElement("input");
                 oField.type = "text";
@@ -130,6 +128,12 @@ document.body.onload = (function() {
             [iCurrentBox] = this.getBox();
 
             this.highlightSame();
+        }
+
+        oField.onblur = function() {
+            aAllFields.forEach(oField => {
+                oField.removeHighlight();
+            });
         }
 
         let bSolveGrid = false;
@@ -221,6 +225,7 @@ document.body.onload = (function() {
         }
 
         oField.getRow = function() {
+            let iRow, aRow;
             for(iRow in oAllRows) {
                 aRow = oAllRows[iRow];
                 if (aRow.indexOf(this) >= 0) {
@@ -230,6 +235,7 @@ document.body.onload = (function() {
             return [parseInt(iRow), aRow];
         }
         oField.getColumn = function() {
+            let iColumn, aColumn;
             for(iColumn in oAllColumns) {
                 aColumn = oAllColumns[iColumn];
                 if (aColumn.indexOf(this) >= 0) {
@@ -240,6 +246,7 @@ document.body.onload = (function() {
         }
 
         oField.getBox = function() {
+            let iBox, aBox;
             for(iBox in oAllBoxes) {
                 aBox = oAllBoxes[iBox];
                 if (aBox.indexOf(this) >= 0) {
@@ -265,13 +272,45 @@ document.body.onload = (function() {
 
         oField.highlightSame = function() {
             // Highlight fields with same value
+            const sSameClassName = "same";
+            const sSeesClassName = "sees";
             const iNumber = this.value;
+
             aAllFields.forEach(oField => {
-                oField.classList.remove("same");
-                if (iNumber && oField.value == iNumber) {
-                    oField.classList.add("same");
-                }
+                oField.removeHighlight();
             });
+
+            if (!bShowSolutions) {
+                return;
+            }
+
+            aAllFields.forEach(oField => {
+                // Skip fields without or not the same value
+                if (!iNumber || oField.value != iNumber) {
+                    return;
+                }
+
+                oField.classList.add(sSameClassName);
+
+                // Highlight fields in the same row, column and box
+                [iRow, aRowFields] = oField.getRow();
+                [iCol, aColFields] = oField.getColumn();
+                [iBox, aBoxFields] = oField.getBox();
+                aRowFields.forEach(oField => {
+                    oField.classList.add(sSeesClassName);
+                });
+                aColFields.forEach(oField => {
+                    oField.classList.add(sSeesClassName);
+                });
+                aBoxFields.forEach(oField => {
+                    oField.classList.add(sSeesClassName);
+                });
+            });
+        }
+
+        oField.removeHighlight = function() {
+            this.classList.remove("sees");
+            this.classList.remove("same");
         }
     }
 
@@ -299,7 +338,7 @@ document.body.onload = (function() {
     }
 
     // Returns unique solution in a oGroup of fields e.g. suggest only once
-    function getUniqueSolution(oGroup) {
+    function getHiddenSingle(oGroup) {
         let oCountSolutions = {};
         oGroup.forEach(oField => {
             if (oField.value) {
@@ -320,7 +359,7 @@ document.body.onload = (function() {
         return null;
     }
 
-    function getPairSolutions(oGroup) {
+    function getNakedPairs(oGroup) {
         let aPairs = [];
         let oCountPairs = [];
         oGroup.forEach(oField => {
@@ -343,12 +382,78 @@ document.body.onload = (function() {
         return aPairs;
     }
 
+    function getPointingPairs(aBoxFields) {
+        let oPointingPairs = {rows: {}, cols: {}};
+        let oRowSolutions = {};
+        let oColSolutions = {};
+
+        aBoxFields.forEach(function(oField, i) {
+            if (oField.value) {
+                return;
+            }
+
+            const iRow = Math.floor(i/3) + 1;
+            const iCol = i%3 + 1;
+
+            oRowSolutions[iRow] = oRowSolutions[iRow] || {};
+            oColSolutions[iCol] = oColSolutions[iCol] || {};
+
+            // Count row and column solutions
+            oField.solutions.forEach(iSolution => {
+                oRowSolutions[iRow][iSolution] = (oRowSolutions[iRow][iSolution] || 0) + 1;
+            });
+            oField.solutions.forEach(iSolution => {
+                oColSolutions[iCol][iSolution] = (oColSolutions[iCol][iSolution] || 0) + 1;
+            });
+        });
+
+        [oRowSolutions, oColSolutions].forEach(oGroup => {
+            for (iCheck in oGroup) {
+                for (iSolution in oGroup[iCheck]) {
+                    for (iCompare in oGroup) {
+                        if (iCompare == iCheck) {
+                            continue;
+                        }
+
+                        // Remove solutions that occure in different rows/cols of this box
+                        if (oGroup[iCompare][iSolution]) {
+                            delete oGroup[iCompare][iSolution];
+                            delete oGroup[iCheck][iSolution];
+                        }
+                    }
+                }
+            }
+        });
+
+        const oGroups = {"rows": oRowSolutions, "cols": oColSolutions};
+        for (sGroup in oGroups) {
+            oGroup = oGroups[sGroup];
+            for (iCheck in oGroup) {
+                // No solutions in this row?
+                if (Object.entries(oGroup[iCheck]).length < 1) {
+                    continue;
+                }
+
+                for (iSolution in oGroup[iCheck]) {
+                    const iCount = oGroup[iCheck][iSolution];
+                    if (iCount < 2) {
+                        continue;
+                    }
+
+                    oPointingPairs[sGroup][iCheck] = oPointingPairs[sGroup][iCheck] || [];
+                    oPointingPairs[sGroup][iCheck].push(parseInt(iSolution));
+                }
+            }
+        }
+
+        return oPointingPairs;
+    }
+
     function clearFields() {
         aAllFields.forEach(oField => {
             oField.value = "";
-            oField.classList.remove("suggestion");
-            oField.classList.remove("same");
-        })
+            oField.removeHighlight();
+        });
 
         // Remove old solutions
         const oOldSolutions = document.querySelectorAll(".solutions");
@@ -392,28 +497,28 @@ document.body.onload = (function() {
             for (iKey in oGroups) {
                 const oGroup = oGroups[iKey];
 
-                // Any unique soutions in this group?
-                const iUniqueSolutions = getUniqueSolution(oGroup);
-                if (iUniqueSolutions) {
+                // Any hidden singles in this group?
+                const iHiddenSingle = getHiddenSingle(oGroup);
+                if (iHiddenSingle) {
                     oGroup.forEach(oField => {
                         if (oField.value) {
                             return;
                         }
-                        if (oField.solutions.includes(iUniqueSolutions)) {
-                            //console.log(oField, oField.solutions, iUniqueSolutions);
-                            oField.solutions = [iUniqueSolutions];
+                        if (oField.solutions.includes(iHiddenSingle)) {
+                            //console.log(oField, oField.solutions, iHiddenSingle);
+                            oField.solutions = [iHiddenSingle];
                         }
                     });
                 }
 
-                // Any paired solutions in this group?
-                const aPairSolutions = getPairSolutions(oGroup);
-                if (aPairSolutions.length) {
+                // Any naked pairs in this group?
+                const aNakedPairs = getNakedPairs(oGroup);
+                if (aNakedPairs.length) {
                     oGroup.forEach(oField => {
                         if (oField.value) {
                             return;
                         }
-                        aPairSolutions.forEach(aPair => {
+                        aNakedPairs.forEach(aPair => {
                             let bPairMatches = oField.solutions.every(iSolution => {
                                 return aPair.includes(iSolution)
                             });
@@ -428,6 +533,47 @@ document.body.onload = (function() {
                 }
             }
         });
+
+        // Check boxes for pointing pairs/tripples
+        for (iBox in oAllBoxes) {
+            const aBoxFields = oAllBoxes[iBox];
+            const oPointingPairs = getPointingPairs(aBoxFields);
+            for (sGroup in oPointingPairs) {
+                const oPairs = oPointingPairs[sGroup];
+                if (Object.entries(oPairs).length < 1) {
+                    continue;
+                }
+
+                for (iBoxPosition in oPairs) {
+                    iBoxPosition = parseInt(iBoxPosition);
+                    // Get absolute row/column of this pair within to whole sudoku
+                    const iRealPosition = iBoxPosition + (sGroup == "rows" ? Math.floor((iBox - 1) / 3) : Math.floor((iBox - 1) % 3)) * 3;
+
+                    const aPairs = oPairs[iBoxPosition];
+                    const oSet = sGroup == "rows" ? oAllRows : oAllColumns;
+
+                    oSet[iRealPosition].forEach(oField => {
+                        // Skip fields that already have a value
+                        if (oField.value) {
+                            return;
+                        }
+
+                        // Skip fields in the same box as the found pair
+                        [iFieldBox] = oField.getBox();
+                        if (iFieldBox == iBox) {
+                            return;
+                        }
+
+                        aPairs.forEach(iPairSolution => {
+                            const iIndex = oField.solutions.indexOf(parseInt(iPairSolution));
+                            if (iIndex > -1) {
+                                oField.solutions.splice(iIndex, 1);
+                            }
+                        });
+                    });
+                }
+            }
+        }
     }
 
     function drawSolutions() {
