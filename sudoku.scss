@@ -73,6 +73,11 @@ body {
                     background-color: #b5cbff;
                 }
 
+                &.collision {
+                    color: red;
+                    background-color: lightpink;
+                }
+
                 &:focus {
                     background-color: #D9E6BD;
 

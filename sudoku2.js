@@ -2,12 +2,8 @@ Sudoku = {
     container: document.getElementById("sudoku"),
     showSolutions: true,
     fields: [],
-    rows: {},
-    columns: {},
-    boxes: {},
-    currentRow: null,
-    currentColumn: null,
-    currentBox: null,
+    rows: {}, columns: {}, boxes: {},
+    currentRow: null, currentColumn: null, currentBox: null,
 
     init: function() {
         Painter.paintSudoku(this);
@@ -15,10 +11,14 @@ Sudoku = {
         this.fields.forEach(oField => {
             this.initFieldActions(oField);
         });
+
+        this.loadFromHash();
     },
 
     initFieldActions: function(oField) {
         const self = this;
+        this.clearOnBlur = false;
+        this.triggerSolve = false;
 
         oField.onfocus = function() {
             [self.currentRow] = this.getRow();
@@ -28,7 +28,6 @@ Sudoku = {
             Painter.highlightSameValuesAs(this);
         }
 
-        let bSolveGrid = false;
         oField.onkeydown = function(e) {
             const sKey = e.key;
             let bNavigate = false;
@@ -64,12 +63,13 @@ Sudoku = {
 
                     // Normal delete..
                     oField.value = "";
-                    bSolveGrid = true;
+                    Painter.removeFromAll("sees", "collision");
+                    oField.triggerSolve = true;
                     return false;
                 case "Enter":
                     // Super solve?
                     if (e.ctrlKey) {
-                        aAllFields.forEach(oField => {
+                        Sudoku.fields.forEach(oField => {
                             const aSolutions = oField.solutions;
                             if (!aSolutions || aSolutions.length != 1) {
                                 return;
@@ -79,20 +79,19 @@ Sudoku = {
                         break;
                     }
 
+                    // Single solve
                     const aSolutions = oField.solutions;
                     if (aSolutions.length != 1) {
                         return false;
                     }
 
                     oField.setValue(aSolutions[0]);
-                    bSolveGrid = true;
                     break;
 
                 default:
                     // Got a number to insert?
                     if (sKey >>> 0 === parseFloat(sKey)) {
                         oField.setValue(sKey);
-                        bSolveGrid = true;
                         break;
                     }
 
@@ -109,23 +108,42 @@ Sudoku = {
         }
 
         oField.setValue = function(sValue) {
+            Painter.removeFromAll("sees", "collision");
+
             this.value = parseInt(sValue);
+            this.clearOnBlur = false;
+            this.triggerSolve = true;
+
+            const aCollisions = Sudoku.getCollisionsWith(this);
+            if (aCollisions.length) {
+                Painter.highlightCollisions(aCollisions);
+                this.clearOnBlur = true;
+                this.triggerSolve = false;
+                return;
+            }
+
             Painter.hideSolutionsOf(this);
             Painter.highlightSameValuesAs(this);
             this.classList.remove("suggestion");
         }
 
         oField.onkeyup = function() {
-            if (bSolveGrid) {
+            if (this.triggerSolve) {
                 Solver.solve();
             }
-            bSolveGrid = false;
+            this.triggerSolve = false;
         }
 
         oField.onblur = function() {
             self.fields.forEach(oField => {
                 Painter.removeHighlightOf(oField);
             });
+
+            if (this.clearOnBlur) {
+                this.value = null;
+                this.clearOnBlur = false;
+                Painter.removeFromAll("collision");
+            }
         }
 
         oField.getRow = function() {
@@ -175,7 +193,69 @@ Sudoku = {
         const oOldSolutions = document.querySelectorAll(".solutions");
         oOldSolutions.forEach(oSolution => oSolution.parentNode.removeChild(oSolution));
 
-        updateHash();
+        Sudoku.updateHash();
+    },
+
+    getCollisionsWith: function(oField) {
+        let aCollisions = [];
+        if (!oField.value) {
+            return aCollisions;
+        }
+
+        [iRow, aRow] = oField.getRow();
+        [iColumn, aColumn] = oField.getColumn();
+        [iBox, aBox] = oField.getBox();
+
+        [aRow, aColumn, aBox].forEach(aGroup => {
+            aGroup.forEach(oCheck => {
+                if (oCheck == oField || !oCheck.value || !oField.value) {
+                    return;
+                }
+                if (oCheck.value == oField.value && !aCollisions.includes(oCheck)) {
+                    aCollisions.push(oCheck);
+                    return;
+                }
+            });
+        });
+
+        return aCollisions;
+    },
+
+    updateHash: function() {
+        const aBoxes = this.boxes;
+        let aHashes = [];
+
+        for (let iBox in aBoxes) {
+            let aBoxValues = "";
+            aBoxes[iBox].forEach(oField => {
+                aBoxValues += oField.value || 0;
+            });
+            aHashes.push(Hash.encode(aBoxValues));
+        }
+        window.location.hash = aHashes.join(".");
+    },
+
+    loadFromHash: function() {
+        const self = this;
+        const sUrlHash = window.location.hash;
+        if (!sUrlHash) {
+            return;
+        }
+
+        const aHashes = sUrlHash.slice(1).split(".");
+        let iBox = 1;
+        aHashes.forEach(sHash => {
+            let sValues = (Hash.decode(sHash) + "").padStart(9, "0");
+            self.boxes[iBox].forEach(oField => {
+                const sFieldValue = sValues.charAt(0);
+                if (sFieldValue != "0") {
+                    oField.value = sFieldValue;
+                }
+                sValues = sValues.slice(1);
+            });
+            iBox++;
+        });
+        Solver.solve();
     }
 }
 
@@ -276,9 +356,27 @@ Painter = {
         });
     },
 
+    highlightCollisions: function(aCollisions) {
+        aCollisions.forEach(oField => {
+            oField.classList.add("collision");
+        });
+    },
+
     removeHighlightOf: function(oField) {
         oField.classList.remove("sees");
         oField.classList.remove("same");
+    },
+
+    removeFromAll: function() {
+        if (!arguments || arguments.length == 0) {
+            return;
+        }
+
+        Sudoku.fields.forEach(oField => {
+            for (i in arguments) {
+                oField.classList.remove(arguments[i]);
+            }
+        });
     },
 
     hideSolutionsOf: function(oField) {
@@ -291,7 +389,7 @@ Painter = {
 
 Solver = {
     solve: function() {
-
+        Sudoku.updateHash();
     }
 }
 
