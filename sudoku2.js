@@ -1,11 +1,12 @@
 Sudoku = {
     container: document.getElementById("sudoku"),
-    showSolutions: true,
+    drawSolutions: true, showSolutions: true,
     fields: [],
     rows: {}, columns: {}, boxes: {},
     currentRow: null, currentColumn: null, currentBox: null,
 
     init: function() {
+        this.showSolutions = this.drawSolutions && this.showSolutions;
         Painter.paintSudoku(this);
 
         this.fields.forEach(oField => {
@@ -88,6 +89,17 @@ Sudoku = {
                     oField.setValue(aSolutions[0]);
                     break;
 
+                case " ":
+                    self.showSolutions = !self.showSolutions;
+                    if (self.showSolutions) {
+                        Painter.drawSolutions();
+                    }
+                    else {
+                        Painter.hideAllSolutions();
+                    }
+
+                    break;
+
                 default:
                     // Got a number to insert?
                     if (sKey >>> 0 === parseFloat(sKey)) {
@@ -109,6 +121,7 @@ Sudoku = {
 
         oField.setValue = function(sValue) {
             Painter.removeFromAll("sees", "collision");
+            Painter.hideSolutionsOf(this);
 
             this.value = parseInt(sValue);
             this.clearOnBlur = false;
@@ -122,7 +135,6 @@ Sudoku = {
                 return;
             }
 
-            Painter.hideSolutionsOf(this);
             Painter.highlightSameValuesAs(this);
             this.classList.remove("suggestion");
         }
@@ -189,10 +201,7 @@ Sudoku = {
             Painter.removeHighlightOf(oField);
         });
 
-        // Remove old solutions
-        const oOldSolutions = document.querySelectorAll(".solutions");
-        oOldSolutions.forEach(oSolution => oSolution.parentNode.removeChild(oSolution));
-
+        Painter.hideAllSolutions();
         Sudoku.updateHash();
     },
 
@@ -260,6 +269,8 @@ Sudoku = {
 }
 
 Painter = {
+    drawSolutionsOnShow: false,
+
     paintSudoku: function() {
         const oGrid = document.createElement("div");
         oGrid.setAttribute("id", "grid");
@@ -379,17 +390,318 @@ Painter = {
         });
     },
 
+    hideAllSolutions: function() {
+        const oOldSolutions = document.querySelectorAll(".solutions");
+        oOldSolutions.forEach(oSolution =>
+            oSolution.parentNode.removeChild(oSolution)
+        );
+    },
+
     hideSolutionsOf: function(oField) {
         const oSolutionsDiv = oField.soltionsDiv;
-        if (oSolutionsDiv) {
+        if (oSolutionsDiv && oSolutionsDiv.length) {
             oSolutionsDiv.parentNode.removeChild(oSolutionsDiv);
         }
+    },
+
+    drawSolutions: function() {
+        // Remove old solutions on redraw
+        this.hideAllSolutions();
+
+        Sudoku.fields.forEach(oField => {
+            const oBox = oField.parentNode;
+            const aSolutions = oField.solutions;
+
+            if (!oField.value && aSolutions.length == 1) {
+                oField.classList.add("suggestion");
+            }
+            else {
+                oField.classList.remove("suggestion");
+            }
+
+            // No need to show solutions if this field already has a value,
+            // all values are still possible or we don't even want to show
+            // solutions at all..
+            if (oField.value || aSolutions.length == 9 || !Sudoku.drawSolutions) {
+                return;
+            }
+
+            // Don't draw solutions just yet
+            if (!Sudoku.showSolutions) {
+                Painter.drawSolutionsOnShow = true;
+                return;
+            }
+
+            const oSolutions = document.createElement("div");
+            oSolutions.setAttribute("class", "solutions");
+            oSolutions.style.top = oField.offsetTop + "px";
+            oSolutions.style.left = oField.offsetLeft + "px";
+
+            // Fill in empty slots
+            for (let i = 1; i <= 9; i++) {
+                const sValue = aSolutions.indexOf(i) >= 0 ? i : "&nbsp;";
+                oSolutions.innerHTML += "<span>" + sValue + "</span>";
+            }
+
+            oSolutions.onclick = function() {
+                oField.focus();
+            };
+            oBox.appendChild(oSolutions);
+            oField.soltionsDiv = oSolutions;
+        });
     }
 }
 
 Solver = {
     solve: function() {
+        this.calculcateSolutions();
+        Painter.drawSolutions();
         Sudoku.updateHash();
+    },
+
+    // Central method to suggest field solutions
+    calculcateSolutions: function() {
+        // Reset field solutions
+        Sudoku.fields.forEach(oField => {
+            if (!oField.value) {
+                oField.solutions = [1,2,3,4,5,6,7,8,9];
+            }
+        });
+
+        // Check each group of fields for missing numbers
+        [Sudoku.rows, Sudoku.columns, Sudoku.boxes].forEach(oGroup => {
+            for (iKey in oGroup) {
+                const aGroup = oGroup[iKey];
+                const aMissingNumbers = Solver.getMissingNumbersOf(aGroup);
+
+                aGroup.forEach(oField => {
+                    if (oField.value) {
+                        return;
+                    }
+
+                    // Merge missing numbers into field solutions
+                    oField.solutions = oField.solutions.filter(iSolution => {
+                        return aMissingNumbers.includes(iSolution);
+                    });
+                });
+            }
+        });
+
+        // Check each group of fields for unique solutions
+        [Sudoku.rows, Sudoku.columns, Sudoku.boxes].forEach(oGroups => {
+            for (iKey in oGroups) {
+                const aGroup = oGroups[iKey];
+                const iHiddenSingle = Solver.getHiddenSingleOf(aGroup);
+
+                // Any hidden singles in this group?
+                if (iHiddenSingle) {
+                    aGroup.forEach(oField => {
+                        if (oField.value) {
+                            return;
+                        }
+                        if (oField.solutions.includes(iHiddenSingle)) {
+                            //console.log(oField, oField.solutions, iHiddenSingle);
+                            oField.solutions = [iHiddenSingle];
+                        }
+                    });
+                }
+
+                // Any naked pairs in this group?
+                const aNakedPairs = Solver.getNakedPairsOf(aGroup);
+                if (aNakedPairs.length) {
+                    aGroup.forEach(oField => {
+                        if (oField.value) {
+                            return;
+                        }
+                        aNakedPairs.forEach(aPair => {
+                            let bPairMatches = oField.solutions.every(iSolution => {
+                                return aPair.includes(iSolution)
+                            });
+                            if (bPairMatches) {
+                                return;
+                            }
+                            oField.solutions = oField.solutions.filter(iSolution => {
+                                return !aPair.includes(iSolution);
+                            });
+                        });
+                    });
+                }
+            }
+        });
+
+        return;
+
+        // Check boxes for pointing pairs/tripples
+        for (iBox in Sudoku.boxes) {
+            const aBox = Sudoku.boxes[iBox];
+            const oPointingPairs = Solver.getPointingPairsOf(aBox);
+
+            for (sGroup in oPointingPairs) {
+                const oPairs = oPointingPairs[sGroup];
+                if (Object.entries(oPairs).length < 1) {
+                    continue;
+                }
+
+                for (iBoxPosition in oPairs) {
+                    iBoxPosition = parseInt(iBoxPosition);
+                    // Get absolute row/column of this pair within to whole sudoku
+                    const iRealPosition = iBoxPosition + (sGroup == "rows" ? Math.floor((iBox - 1) / 3) : Math.floor((iBox - 1) % 3)) * 3;
+
+                    const aPairs = oPairs[iBoxPosition];
+                    const oSet = sGroup == "rows" ? Sudoku.rows : Sudoku.columns;
+
+                    oSet[iRealPosition].forEach(oField => {
+                        // Skip fields that already have a value
+                        if (oField.value) {
+                            return;
+                        }
+
+                        // Skip fields in the same box as the found pair
+                        [iFieldBox] = oField.getBox();
+                        if (iFieldBox == iBox) {
+                            return;
+                        }
+
+                        aPairs.forEach(iPairSolution => {
+                            const iIndex = oField.solutions.indexOf(parseInt(iPairSolution));
+                            if (iIndex > -1) {
+                                oField.solutions.splice(iIndex, 1);
+                            }
+                        });
+                    });
+                }
+            }
+        }
+    },
+
+    // Returns array of missing numbers in a group of fields
+    getMissingNumbersOf: function(aGroup) {
+        let aMissing = [1,2,3,4,5,6,7,8,9];
+        aGroup.forEach(oField => {
+            if (!oField.value) {
+                return;
+            }
+
+            // Remove field value from list of missing numbers
+            iSolution = parseInt(oField.value);
+            const iIndex = aMissing.indexOf(iSolution);
+            if (iIndex > -1) {
+                aMissing.splice(iIndex, 1);
+            }
+        });
+        return aMissing;
+    },
+
+    // Returns unique solution in a oGroup of fields e.g. suggest only once
+    getHiddenSingleOf: function(aGroup) {
+        let oCountSolutions = {};
+        aGroup.forEach(oField => {
+            if (oField.value) {
+                //const iSolution = parseInt(oField.value);
+                //oCountSolutions[iSolution] = (oCountSolutions[iSolution] || 0) + 1;
+            }
+            else {
+                oField.solutions.forEach(iSolution => {
+                    oCountSolutions[iSolution] = (oCountSolutions[iSolution] || 0) + 1;
+                });
+            }
+        });
+        for (iSolution in oCountSolutions) {
+            if (oCountSolutions[iSolution] == 1) {
+                return parseInt(iSolution);
+            }
+        }
+        return null;
+    },
+
+    getNakedPairsOf: function(aGroup) {
+        let aPairs = [], oCountPairs = [];
+
+        aGroup.forEach(oField => {
+            if (oField.value) {
+                return;
+            }
+            if (oField.solutions.length == 2) {
+                const sPair = oField.solutions.join("");
+                oCountPairs[sPair] = (oCountPairs[sPair] || 0) + 1;
+            }
+        });
+        for (let sPair in oCountPairs) {
+            if (oCountPairs[sPair] < 2) {
+                continue;
+            }
+            let aPair = sPair.split("").map(Number);
+            aPairs.push(aPair);
+        }
+
+        return aPairs;
+    },
+
+    getPointingPairsOf: function(aBox) {
+        let oPointingPairs = {rows: {}, cols: {}};
+        let oRowSolutions = {};
+        let oColSolutions = {};
+
+        aBox.forEach(function(oField, i) {
+            if (oField.value) {
+                return;
+            }
+
+            const iRow = Math.floor(i/3) + 1;
+            const iCol = i%3 + 1;
+
+            oRowSolutions[iRow] = oRowSolutions[iRow] || {};
+            oColSolutions[iCol] = oColSolutions[iCol] || {};
+
+            // Count row and column solutions
+            oField.solutions.forEach(iSolution => {
+                oRowSolutions[iRow][iSolution] = (oRowSolutions[iRow][iSolution] || 0) + 1;
+            });
+            oField.solutions.forEach(iSolution => {
+                oColSolutions[iCol][iSolution] = (oColSolutions[iCol][iSolution] || 0) + 1;
+            });
+        });
+
+        [oRowSolutions, oColSolutions].forEach(oGroup => {
+            for (iCheck in oGroup) {
+                for (iSolution in oGroup[iCheck]) {
+                    for (iCompare in oGroup) {
+                        if (iCompare == iCheck) {
+                            continue;
+                        }
+
+                        // Remove solutions that occure in different rows/cols of this box
+                        if (oGroup[iCompare][iSolution]) {
+                            delete oGroup[iCompare][iSolution];
+                            delete oGroup[iCheck][iSolution];
+                        }
+                    }
+                }
+            }
+        });
+
+        const oGroups = {"rows": oRowSolutions, "cols": oColSolutions};
+        for (sGroup in oGroups) {
+            oGroup = oGroups[sGroup];
+            for (iCheck in oGroup) {
+                // No solutions in this row?
+                if (Object.entries(oGroup[iCheck]).length < 1) {
+                    continue;
+                }
+
+                for (iSolution in oGroup[iCheck]) {
+                    const iCount = oGroup[iCheck][iSolution];
+                    if (iCount < 2) {
+                        continue;
+                    }
+
+                    oPointingPairs[sGroup][iCheck] = oPointingPairs[sGroup][iCheck] || [];
+                    oPointingPairs[sGroup][iCheck].push(parseInt(iSolution));
+                }
+            }
+        }
+
+        return oPointingPairs;
     }
 }
 

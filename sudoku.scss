@@ -61,10 +61,6 @@ body {
                 color: transparent;
                 text-shadow: 0 0 0 black;
 
-                &.suggestion {
-                    background-color: #FFD36B;
-                }
-
                 &.sees {
                     background-color: #ffe9b5;
                 }
@@ -73,13 +69,17 @@ body {
                     background-color: #b5cbff;
                 }
 
+                &.suggestion {
+                    background-color: #FFD36B;
+                }
+
                 &.collision {
                     color: red;
                     background-color: lightpink;
                 }
 
                 &:focus {
-                    background-color: #D9E6BD;
+                    background-color: #CEDFAB;
 
                     &.suggestion {
                         background-color: #ECDD94;
